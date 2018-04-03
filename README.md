@@ -1,9 +1,9 @@
-# run-petri
+# run-petri-async
 A simple Petri Net class for modeling sequencing.
 
 # Node Module providing Classes
 
-run-petri is a node.js module that exports two classes, *RunPetri*, and *pNode*. 
+run-petri-async is a node.js module that exports two classes, *RunPetri*, and *pNode*. 
 
 A third, class, pTransition, is not exported. It is sufficiently abstract that it might not be subclassed.
 
@@ -20,6 +20,30 @@ And, the exported classes are:
 
 Changes of behavior from the default are to be made by subclassing: *pNode*.
 The way pNode may be subclassed will be discussed later.
+
+
+Much of what follows is repeated from Run-Petri.
+
+But, there are definite difference between Run-Petri and Run-Petri-Asycn.
+
+
+    What differs from run-petri is the absence of a step method.
+
+    All action moves foward based on the cascade of states and the readiness of transitions.
+    Confusions will be handled by cloning tokens that then follow splits into downstream transitions.
+    Hence the forwarding of the resource is treated as a broadcast.
+
+    In node.js this split forwarding is done simply by emiting an event, which is sent to all listeners.
+    So, during initialization the event listener lists are established by processing the configuration,
+    which includes the net definition.
+
+
+    Capturing the state of the petri net for display becomes a little more difficult, since a simple report of the net
+    state won't be able to be seen. Events will go by too quickly for the messages to be sent to browsers for state displays.
+    So, a State Trace Sink, may be introduced. The sink waits for events from the Petri nodes (places).
+    The Trace Sink looks for a "place-trace" event, which has the as parameters the id of the state, the value updating the place, and the time in UNIX epoch milliseconds.
+
+
 
 
 The pNode class provides a default Petri Net behavior, keeping track of a token count. And, the token count is updated when a transition is triggered. The transition merely moves input node resources (decrements the token count of input nodes) to a reduction in the output nodes (increments the token count of output nodes). 
@@ -104,11 +128,6 @@ You will see in the code that there is a switch statement. By looking at the cas
 For example load our example Petr net, p1.json.
 Then, 
 * send L-sensor-1 3
-* step
-* report
-* step
-* step
-* report
 
 This example always shows 0 values for the exit nodes. Exit nodes do not store their resource. They execute a callback that operates on the value derived from the resource that is receives. In many real situations, it may be that the exit node send commands to hardware elements. 
 
