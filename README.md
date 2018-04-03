@@ -41,7 +41,8 @@ But, there are definite difference between Run-Petri and Run-Petri-Asycn.
     Capturing the state of the petri net for display becomes a little more difficult, since a simple report of the net
     state won't be able to be seen. Events will go by too quickly for the messages to be sent to browsers for state displays.
     So, a State Trace Sink, may be introduced. The sink waits for events from the Petri nodes (places).
-    The Trace Sink looks for a "place-trace" event, which has the as parameters the id of the state, the value updating the place, and the time in UNIX epoch milliseconds.
+    The Trace Sink looks for a "place-trace" event, which has the as parameters the id of the state, 
+    the value updating the place, and the time in UNIX epoch milliseconds.
 
 
 
@@ -118,18 +119,21 @@ A basic cli application for the run-petri model can be found in the module direc
 
 You should be able to run it: **node tryout.js**
 
-You will see in the code that there is a switch statement. By looking at the cases, you will see that the program accepts four basic comamnds: load, report, send, step. 
+You will see in the code that there is a switch statement. By looking at the cases, you will see that the program accepts four basic comamnds: load, send. 
 
 - Use ```load <filename>``` to load the PetriNet description.
-- Use ```report``` to see the states of the nodes. 
 - Use ```send <node-name>``` to put some number of tokens into a node.
-- Use ```step``` to make transitions fire.
 
-For example load our example Petr net, p1.json.
+For example load our example Petr net, p2.json.
+
 Then, 
 * send L-sensor-1 3
 
-This example always shows 0 values for the exit nodes. Exit nodes do not store their resource. They execute a callback that operates on the value derived from the resource that is receives. In many real situations, it may be that the exit node send commands to hardware elements. 
+So, there is no report in this. But, there is a hook allowing states to emit traces events.
+
+When application calls the *setTraceSink* method of the RunPetri instance, it expects an event listener that has an implementation of the **place-trace** event. The parameters of the event are the id of the place (state/node), the value that causes the place to be marked, and the timestamp of the event.
+
+The object has no other requirements and may be implemented to suit tha application. 
 
  
 # Creating Subclasses of the pNode Class.
