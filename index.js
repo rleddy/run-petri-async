@@ -18,9 +18,23 @@ var EventEmitter = require('events');
 
     Capturing the state of the petri net for display becomes a little more difficult, since a simple report of the net
     state won't be able to be seen. Events will go by too quickly for the messages to be sent to browsers for state displays.
-    So, a State Trace Sink, may be introduced. The sink waits for events from the Petri nodes (places).
-    The Trace Sink looks for a "place-trace" event, which has the as parameters the id of the state, the value updating the place,
-    and the time in UNIX epoch milliseconds.
+    So, a State Trace Sink, may be introduced. The sink waits for events associated with the Petri nodes (places).
+
+    In this implementation of a Petri net with asynchronous forwarding, the actual state is known by the transition.
+    The transition store the state of places that figure into its activation. And, the transition is a good position to repor
+    on the states that will be able to accept resource markers. So, the trasitions object is given the taks of emiting
+    repors that may be used to render or record the progress of a the Petri net.
+
+    The Trace Sink looks for two kinds of "place-trace" events, which have the as parameters the ids of the states, the values updating the places,
+    and the time in UNIX epoch milliseconds.  There are two kinds of "place-trace" events.
+    1) place-trace-pre
+    2) place-trace-post
+
+    The first event reports the state of places as soon as a transition is ready to fire. The transition will decide that it is active
+    when its set of pre-nodes match with the set of markers transitions from them. It is required that all the pre-mode markers match in
+    terms of presence and excitation or absence and inhibition.
+
+    The second event is a report of post-nodes that receive resource markers from the transition.
 
 
     //----- ----- ----- ----- ----- ----- ----- ----- ----- ----- -----
@@ -125,20 +139,10 @@ class pNode extends EventEmitter {
 
         this.transitions = [];
 
-        this.traceSink = null;
     }
 
     // if the trace sink is set, it will be used to tell a log manager
     // that it has been visited at a particular point in time.
-
-    setTraceSink(sink) {
-        this.traceSink = sink;
-    }
-
-    trace(value) {
-        this.traceSink.emit("place-trace",this.id,value,Date.now());
-    }
-
 
     identity() {
         return(this.id)
@@ -194,16 +198,17 @@ class pNode extends EventEmitter {
     addResource(value) {
         this.resource += parseInt(value);  // default is to add how many
         this.transitions.forEach( t => {
-                                     t.emit(this.id,value, this, this.resource);
-                                     if ( this.traceSink ) {  // for visualization...
-                                         this.trace(value);
-                                     }
+                                     t.emit(this.id, value, this, this.resource);
                                  })
     }
 
     consume() {
         this.resource -= 1;
         return(1);
+    }
+
+    clear() {
+        this.resource = 0;
     }
 
 }
@@ -229,6 +234,9 @@ class pTransition extends EventEmitter {
         this.preNodes = [];
         this.postNodes = [];
         this.nodeLookup = {};
+
+        // as places become active, this object is populated with their
+        // quantities or value objects.
         this.nodeEnableCheck = {};
 
         this.resourceGroup = [];
@@ -239,6 +247,17 @@ class pTransition extends EventEmitter {
         this.initAccumulator = 0;  /// default
         this.forwardValue = 0; // default;
 
+        this.traceSink = null;
+
+    }
+
+    clear() {
+        //
+        this.nodeEnableCheck = {};
+    }
+
+    setTraceSink(sink) {
+        this.traceSink = sink;
     }
 
     addPostNode(pnode) {
@@ -252,6 +271,47 @@ class pTransition extends EventEmitter {
         }
     }
 
+
+
+    // determines that transition conditions have been met.
+    matchInputs() {
+        // examine nodeEnableCheck
+        var active = this.preNodes.every( pn => {
+                                 return(this.nodeEnableCheck[pn.identity()] !== undefined);
+                            } );
+        return(active)
+    }
+
+    // set up the handler for accepting place activated events.
+    // called by addPreNode
+
+    listenToNode(nid) {
+        this.on(nid,(value,node,qty) => {  // always a pre-node emits to the current transition
+                    this.nodeEnableCheck[node.identity()] = node.consume(qty);
+
+                    if ( this.matchInputs() ) {  // Then check to see if all nodes for transistion are accounted for.
+
+                        if ( this.traceSink ) {  // tell application which places are supplying resources.
+                            this.traceSink.emit("place-trace-pre",this.label,this.nodeEnableCheck,Date.now());
+                        }
+
+                        // GO THROUGH A REDUCTION PROCESS - take the collected resources and reduce them.
+                        this.consume_preNode_resources();
+
+                        this.clear();
+
+                        if ( this.traceSink ) {
+                            var postPlaceIds = this.postNodes.map(nn => { return( nn.id ); });
+                            this.traceSink.emit("place-trace-post",this.label,postPlaceIds,Date.now());
+                        }
+
+                        // NOW OUTPUT - emit the reduction of resources performed by this transition.
+                        this.output_resource_to_postNodes();
+                    }
+                });
+    }
+
+
     addPreNode(pnode) {
         //
         if ( this.nodeLookup[pnode.identity()] == undefined ) {
@@ -259,13 +319,8 @@ class pTransition extends EventEmitter {
             //
             this.preNodes.push(pnode);
             pnode.addTransition(this);
-            this.on(pnode.identity(),(value,node,qty) => {
-                        this.nodeEnableCheck[node.identity()] = node.consume(qty);
-                        if ( this.matchInputs() ) {
-                            this.consume_preNode_resources();
-                            this.output_resource_to_postNodes();
-                        }
-                    })
+
+            this.listenToNode(pnode.identity());
         } else {
             throw new Exception("Adding node to post transition twice.")
         }
@@ -282,13 +337,11 @@ class pTransition extends EventEmitter {
     }
 
 
-    matchInputs() {
-        return(true)
-    }
-
+    // traces happen here...
+    //
     consume_preNode_resources() {
         this.resourceGroup = Object.keys(this.nodeEnableCheck).map( key => { return(this.nodeEnableCheck[key]); } );
-        this.forwardValue = this.resourceGroup.reduce(this.reducer,this.initAccumulator);
+        this.forwardValue = this.resourceGroup.reduce(this.reducer,this.initAccumulator);  // the array reduce..
     }
 
     output_resource_to_postNodes() {
@@ -444,10 +497,20 @@ module.exports.RunPetri = class RunPetri extends EventEmitter {
 
 
     setTraceSink(sink) {
-        for ( var k in this.nodeLookup ) {
-            var nn = this.nodeLookup[k];
-            nn.setTraceSink(sink);
+        this.transitions.forEach( tt => {
+                                     tt.setTraceSink(sink);
+                                 } )
+    }
+
+
+    clear_tokens() {
+        for ( var k in this.nodes ) {
+            this.nodes[k].clear();
         }
+
+        this.transitions.forEach( tt => {
+                                     tt.clear();
+                                 } )
     }
 
 }
