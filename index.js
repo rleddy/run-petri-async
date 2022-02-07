@@ -1,9 +1,11 @@
 
-var EventEmitter = require('events');
+const EventEmitter = require('events');
 
 
 /*
   run-petri-async
+
+    This module is similar to run-petri : https://github.com/rleddy/run-petri
 
     What differs from run-petri is the absence of a step method.
 
@@ -72,7 +74,7 @@ var EventEmitter = require('events');
 
 function clonify(obj) {
     if ( typeof obj === "object" ) {
-        var cv = JSON.parse(JSON.toString(obj))
+        let cv = JSON.parse(JSON.toString(obj))
         return(cv);
     } else {
         return(obj)
@@ -149,41 +151,59 @@ class pNode extends EventEmitter {
     }
 
     hasResource(label) {
-        var marked = (this.count() > 0);
+        let marked = (this.count() > 0);
         if ( this.inhibits ) {
             if ( this.inhibits == label ) return(!marked)
         }
         return(marked);
     }
 
+
     forward(value) {
 
-        var v = clonify(value);
+        let v = clonify(value);         // if the value is a sum of inputs, this will be overkill (useful when object are in transit)
 
-        if ( this.contraints !== undefined ) {
-            if ( !(this.contraints(v)) ) return(false)
+        if ( this.contraints !== undefined ) {              // The values is coming from a transition (after reduction)
+            // This exposes contraints on forwarding to the JSON definition. By restricting override to the node, 
+            // this allows for transitions values to be filtered as if they were on the transition. 
+            // (check other version for customizing this behavior on the transition)
+            if ( !(this.contraints(v)) ) return(false)      //
         }
 
-        if ( this.type === "exit" ) {
+        if ( this.type === "exit" ) {           // An exit node will work on emiting values to networks or hardware.
             if ( this.exitCallBack ) {
                 this.exitCallBack(v);
             }
-        } else {
-            this.addResource(v);
+        } else {        // (peculiar to async -- private -- call the descendant methods from within this call)
+            this.#_addResource(v);      // If not sending the value away, then store it on the node -- use events to forward
         }
 
         return(true);
     }
 
+
+    // Nodes of type "exit" - these are terminals of the DAG.
+    // see above forward(value)
+    // the cb method is a consumer of "value". cb does not return a result
     setExitCB(cb) {
         this.exitCallBack = cb;
     }
 
 
+    // addTransition
+    // Peculiar to the async version.
+    // Adding a resource to a node means that value will be stored locally
+    // and will be emitted to downstream transitions.
     addTransition(trans) {
         this.transitions.push(trans);
     }
 
+    #_addResource(v) {
+        this.addResource(v)         // application defined storage (accumulation)
+        this.transitions.forEach( t => {
+            t.emit(this.id, v, this, this.resource);        // Emit to transitions listening to this node
+        })
+    }
 
     // overrides start here....
 
@@ -191,15 +211,18 @@ class pNode extends EventEmitter {
         return([this.id,this.resource])
     }
 
+    // count
+    // In the default case, the resource stored the number of tokens at a node
     count() {
         return(this.resource)
     }
 
+    // addResource
+    //      -- Descendants may override this method in order to utilize 
+    //      -- their own storage module for value.
+    //      -- this is then called by the private _add_resource methods which emits values to transitions.
     addResource(value) {
-        this.resource += parseInt(value);  // default is to add how many
-        this.transitions.forEach( t => {
-                                     t.emit(this.id, value, this, this.resource);
-                                 })
+        this.resource += parseInt(value);  // default is to add how many transitions updated this node
     }
 
     consume() {
@@ -214,11 +237,11 @@ class pNode extends EventEmitter {
 }
 
 
-
+// EXPORT pNode
 module.exports.pNode = pNode;
 
 
-
+//                                          TRANSITIONS
 //
 // pTransition -
 //
@@ -239,6 +262,9 @@ class pTransition extends EventEmitter {
         // quantities or value objects.
         this.nodeEnableCheck = {};
 
+        // During definition, a custom value check may be added to a transition
+        this.customValueChecking = {}
+
         this.resourceGroup = [];
         //
         this.label = label;
@@ -246,6 +272,8 @@ class pTransition extends EventEmitter {
         this.reducer = (accumulator, currentValue) => accumulator + currentValue; // default
         this.initAccumulator = 0;  /// default
         this.forwardValue = 0; // default;
+
+        this.#_has_transition_filters = false
 
         this.traceSink = null;
 
@@ -272,11 +300,27 @@ class pTransition extends EventEmitter {
     }
 
 
+    addCustomValueChecking(nid,checker) {
+        if ( typeof checker === "function" ) {
+            this.#_has_transition_filters = true
+            this.customValueChecking[nid] = checker
+        }
+    }
+
+
+    custom_checking(value,node,qty) {
+        let checker = this.customValueChecking[node.identity()]
+        if ( checker !== undefined ) {
+            return(checker(value,qty))
+        }
+        return true
+    }
+
 
     // determines that transition conditions have been met.
     matchInputs() {
-        // examine nodeEnableCheck
-        var active = this.preNodes.every( pn => {
+        // examine nodeEnableCheck   --- notice that preNodes are being reviewed
+        let active = this.preNodes.every( pn => {
                                  return(this.nodeEnableCheck[pn.identity()] !== undefined);
                             } );
         return(active)
@@ -287,7 +331,11 @@ class pTransition extends EventEmitter {
 
     listenToNode(nid) {
         this.on(nid,(value,node,qty) => {  // always a pre-node emits to the current transition
-                    this.nodeEnableCheck[node.identity()] = node.consume(qty);
+                    if ( this.#_has_transition_filters ) {
+                        if ( !this.custom_checking(value,node,qty) ) return
+                    }
+                    let v = node.consume(qty);
+                    this.nodeEnableCheck[node.identity()] = v;
 
                     if ( this.matchInputs() ) {  // Then check to see if all nodes for transistion are accounted for.
 
@@ -298,10 +346,10 @@ class pTransition extends EventEmitter {
                         // GO THROUGH A REDUCTION PROCESS - take the collected resources and reduce them.
                         this.consume_preNode_resources();
 
-                        this.clear();
+                        this.clear();           // clear out accumulated inputs 
 
                         if ( this.traceSink ) {
-                            var postPlaceIds = this.postNodes.map(nn => { return( nn.id ); });
+                            let postPlaceIds = this.postNodes.map(nn => { return( nn.id ); });
                             this.traceSink.emit("place-trace-post",this.label,postPlaceIds,Date.now());
                         }
 
@@ -327,10 +375,10 @@ class pTransition extends EventEmitter {
     }
 
     // The transition will be invoked only if it is enabled.
-    // it is enabled if all prenodes have resource and do not
+    // it is enabled if all prenodes have at least one resource and do not
     // inhibit this node.
     all_preNodes_active() {
-        var all_ready = this.preNodes.every(pnode => {
+        let all_ready = this.preNodes.every(pnode => {
                                                 return(pnode.hasResource(this.label));
                                             })
         return(all_ready);
@@ -339,14 +387,26 @@ class pTransition extends EventEmitter {
 
     // traces happen here...
     //
+    // consume_preNode_resources
+    // step 1:  (Note the difference from sync version) Build a list of values from nodes that enabled the transition
+    //          The enablements come about by the transition listening to the node.
+    //          The 'nodeEnableCheck' object maps keys to the values returned by each node's 'consume' method.
+    // step 2:  Reduce the array using either default initialization and reduction,
+    //          or use the custom initializer and reducer set by 'setSpecialReduction' 
+    //          which is specified in the network's JSON input
     consume_preNode_resources() {
         this.resourceGroup = Object.keys(this.nodeEnableCheck).map( key => { return(this.nodeEnableCheck[key]); } );
         this.forwardValue = this.resourceGroup.reduce(this.reducer,this.initAccumulator);  // the array reduce..
     }
 
+
+    // output_resource_to_postNodes
+    // For each node that takes input from this transition, 
+    //  take the value to be forwarded, forwardValue, which was computed in 'consume_preNode_resources'
+    //  and emit the value to the given node on a 'transition' event.
     output_resource_to_postNodes() {
         this.postNodes.forEach(pnode => {
-                                   pnode.emit("transition",this.forwardValue);
+                                   pnode.emit("transition",this.forwardValue);  // emit transition even bearing the reduction, 'forwardValue'
                                });
     }
 
@@ -365,7 +425,7 @@ class pTransition extends EventEmitter {
 //
 //  This is the operation container for a single Petr net instance.
 
-
+// EXPORT RunPetri
 module.exports.RunPetri = class RunPetri extends EventEmitter {
 
     constructor() {
@@ -380,23 +440,23 @@ module.exports.RunPetri = class RunPetri extends EventEmitter {
 
     }
 
-    setNetworkFromJson(net_def,cbGen,nodeClasses) {
-        var nodes = net_def.nodes.map(nodeDef => {
+    setNetworkFromJson(net_def,cbGen,nodeClasses,checkerGen) {     // checkerGen optional
+        let nodes = net_def.nodes.map(nodeDef => {
 
-                                          var id = nodeDef.id;
-                                          var type = nodeDef.type;
+                                          let id = nodeDef.id;
+                                          let type = nodeDef.type;
 
                                           if ( type === "source" ) {
                                               this.on(id,this.reactor(id));
                                           }
 
-                                          var target = undefined;
+                                          let target = undefined;
                                           if ( nodeDef.transition ) {
                                               target = nodeDef.transition;
                                           }
 
                                           if ( nodeDef.class && nodeClasses ) {
-                                              var nodeClass = nodeClasses[nodeDef.class];
+                                              let nodeClass = nodeClasses[nodeDef.class];
                                               return(new nodeClass(id,type,target));
                                           } else {
                                               return(new pNode(id,type,target));
@@ -404,12 +464,12 @@ module.exports.RunPetri = class RunPetri extends EventEmitter {
 
                                       });
 
-        this.loadGraph(nodes,net_def.transitions,cbGen);
+        this.loadGraph(nodes,net_def.transitions,cbGen,checkerGen);
     }
 
 
 
-    loadGraph(nodes,transitions,cbGen) {
+    loadGraph(nodes,transitions,cbGen,checkerGen) {
 
         if ( nodes === undefined ) { throw new Exception("no nodes specified"); }
         if ( transitions === undefined ) { throw new Exception("no transitions specified"); }
@@ -439,9 +499,9 @@ module.exports.RunPetri = class RunPetri extends EventEmitter {
 
         this.transitions = transitions.map(transDef => {
 
-                                               var trans = new pTransition(transDef.label);
-                                               transDef.inputs.forEach(input => {
-                                                                           var nn = this.nodes[input];
+                                                let trans = new pTransition(transDef.label);
+                                                transDef.inputs.forEach(input => {
+                                                                           let nn = this.nodes[input];
 
                                                                            if ( this.claimed[input] && (nn.inhibits != transDef.label) ) {
                                                                                throw new Error(`${input} used more than once in transitions''`)
@@ -452,18 +512,29 @@ module.exports.RunPetri = class RunPetri extends EventEmitter {
                                                                            trans.addPreNode(nn);
                                                                     })
 
-                                               transDef.outputs.forEach(output => {
-                                                                            var nn = this.nodes[output];
+                                                //  -- take definitions from the JSON description
+                                                // Given nodes have been created and intialized, addPostNode (same in both sync and async)
+                                                // Now, also (peculiar to the async version), add a transition event handler to the node
+                                                // The transtion will 'emit' an event and the handler will 'forward' the value.
+                                                transDef.outputs.forEach(output => {
+                                                                            let nn = this.nodes[output];
                                                                             trans.addPostNode(nn);
                                                                             nn.on("transition", (reduction) => {
                                                                                       nn.forward(reduction);
                                                                                   });
                                                                         })
 
-                                               if ( transDef.reduction ) {
+                                                if ( transDef.reduction ) {
                                                    if ( transDef.reduction.reducer && transDef.reduction.initAccumulator ) {
-                                                       var reduct = cbGen(transDef.reduction.reducer,'reduce')
+                                                       let reduct = cbGen(transDef.reduction.reducer,'reduce')
                                                        trans.setSpecialReduction(reduct,transDef.reduction.initAccumulator);
+                                                   }
+                                               }
+
+                                               if ( checkerGen && transDef.value_checking ) {
+                                                   for ( let node_id in transDef.value_checking ) {
+                                                       let checker = checkerGen(transDef.value_checking[node_id])
+                                                       trans.addCustomValueChecking(node_id,checker)
                                                    }
                                                }
 
@@ -489,7 +560,7 @@ module.exports.RunPetri = class RunPetri extends EventEmitter {
     reactor(sourceName) {
         return((value) => {
                    if ( this.sourceNodes[sourceName] ) {
-                       var pnode = this.sourceNodes[sourceName];
+                       let pnode = this.sourceNodes[sourceName];
                        pnode.forward(value);
                    }
                })
@@ -504,7 +575,7 @@ module.exports.RunPetri = class RunPetri extends EventEmitter {
 
 
     clear_tokens() {
-        for ( var k in this.nodes ) {
+        for ( let k in this.nodes ) {
             this.nodes[k].clear();
         }
 
@@ -514,10 +585,5 @@ module.exports.RunPetri = class RunPetri extends EventEmitter {
     }
 
 }
-
-
-
-
-
 
 

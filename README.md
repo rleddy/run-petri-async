@@ -1,11 +1,17 @@
 # run-petri-async
+
 A simple Petri Net class for modeling sequencing.
+
+### async : 
+> In this module async does not refer to JavaScript async/await pairing. It means that the application program will not step the machine. Instead, the machine will use a cascade of events and event listeners.
 
 # Node Module providing Classes
 
-run-petri-async is a node.js module that exports two classes, *RunPetri*, and *pNode*. 
+> This module is similar to run-petri : https://github.com/rleddy/run-petri.  It differs in methods supplied and in the manner of execution. More explanation is given below.
 
-A third, class, pTransition, is not exported. It is sufficiently abstract that it might not be subclassed.
+run-petri-async is a node.js module that exports two classes, ***RunPetri***, and ***pNode***.
+
+A third, class, **pTransition**, is not exported. It is sufficiently abstract that it might not be subclassed.
 
 So, the list of classes implemented is the following:
 
@@ -15,16 +21,16 @@ So, the list of classes implemented is the following:
 
 And, the exported classes are:
 
-* RunPetri
-* pNode
+* **RunPetri**
+* **pNode**
 
-Changes of behavior from the default are to be made by subclassing: *pNode*.
+Changes of behavior from the default are to be made by subclassing: ***pNode***.
 The way pNode may be subclassed will be discussed later.
 
 
 Much of what follows is repeated from Run-Petri.
 
-But, there are definite difference between Run-Petri and Run-Petri-Asycn.
+But, there are definite <u>**differences**</u> between ***Run-Petri*** and ***Run-Petri-Async***.
 
 
     What differs from run-petri is the absence of a step method.
@@ -37,7 +43,6 @@ But, there are definite difference between Run-Petri and Run-Petri-Asycn.
     So, during initialization the event listener lists are established by processing the configuration,
     which includes the net definition.
 
-
     Capturing the state of the petri net for display becomes a little more difficult, since a simple report of the net
     state won't be able to be seen. Events will go by too quickly for the messages to be sent to browsers for state displays.
     So, a State Trace Sink, may be introduced. The sink waits for events from the Petri nodes (places).
@@ -47,9 +52,9 @@ But, there are definite difference between Run-Petri and Run-Petri-Asycn.
 
 
 
-The pNode class provides a default Petri Net behavior, keeping track of a token count. And, the token count is updated when a transition is triggered. The transition merely moves input node resources (decrements the token count of input nodes) to a reduction in the output nodes (increments the token count of output nodes). 
+The pNode class provides a default Petri Net behavior, keeping track of a token count. And, the token count is updated when a transition is triggered. A transition merely moves input node resources (decrements the token count of input nodes) to a reduction in the output nodes (increments the token count of output nodes). 
 
-The class, RunPetri, is the class that takes in the net definition, a JSON object, so that the network model may be stored and used. The class RunPetri exposes methods for adding in resources. running transitions, and finally executing pNode methods on nodes that deliver outputs to applications. 
+The class, RunPetri, is the class that takes in the net definition, a JSON object, so that the network model may be stored and used. The class RunPetri exposes methods for adding in resources, running transitions, and finally executing pNode methods on nodes that deliver outputs to applications. 
 
 Every time the 'step' method of RunPetri is called, RunPetri objects will examine each transition element to see if it has enough inputs to fire. If it does, the transition methods will reduce the input resources and transition the result of the reduction to the output nodes. (The default behavior for reduction is to AND the inputs and use the result to increment the outputs.)
 
@@ -70,13 +75,13 @@ pNet.setNetworkFromJson(net_def)
 
 The JSON object referenced by net_def in the example above has an array of nodes definitions and an array of transitions.
 
-Once the nodes and transitions are compiled by the RunPetri instance, the nodes (circels in Petri net diagrams) may receive values.
+Once the nodes and transitions are compiled by the RunPetri instance, the nodes (circles in Petri net diagrams) may receive values.
 
 When all the inputs nodes of a transition contain values, the Petri net may perform actions that move the values forward through reductions. Transitions that have all of their inputs containing values, are called "active" transitions. 
 
 It is up to the application program to trigger the execution of the active transitions. At any time, the application may call pNet.step(), and drive the values forward. 
 
-When the appliation calls pNet.step(), *step* examines all transitions for activation and then calls upon the reduction methods of the transition move the values. 
+(*The step method is not included in run-petri-async.*)
 
 
 The RunPetri class is defined with a way for the application program to pass values into it asynchronoulsy. The JSON object may contain definitions of nodes that will be called *sources*. The RunPetri instance compiles event handlers for events named with the ids of the source nodes. In this way, processes that take in data asynchronously may emit values to the source nodes, creating new resources that may flow throught the net. For example, if a source node is named, "sensor1", the applcation may call, pNet.emit("sensor1",value).
@@ -127,6 +132,7 @@ You will see in the code that there is a switch statement. By looking at the cas
 For example load our example Petr net, p2.json.
 
 Then, 
+
 * send L-sensor-1 3
 
 So, there is no report in this. But, there is a hook allowing states to emit traces events.
