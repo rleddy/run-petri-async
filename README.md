@@ -49,18 +49,18 @@ But, there are definite <u>**differences**</u> between ***Run-Petri*** and ***Ru
     The Trace Sink looks for a "place-trace" event, which has the as parameters the id of the state, 
     the value updating the place, and the time in UNIX epoch milliseconds.
 
+Petri nets are made up of nodes and transitions in an acyclic graph. (A transitions is a type of node). Often, a Petri-net has a representation in matrix form. But, for this module, the network is maintained as an in-memory graph of nodes and references. More the representation and alternatives can be found here [copious-petri-modules](https://www.github.com/copious-world/petri-modules)
 
+The **pNode** class provides a default Petri Net behavior, keeping track of a token count. The token count is updated when a transition is triggered. The transition merely moves input node resources (decrements the token count of input nodes) to a reduction in the output nodes (increments the token count of output nodes). 
 
+The class, **RunPetri**, is the class that takes in the net definition, a JSON object, so that the network model may be stored and used. The class RunPetri exposes methods for adding in resources. running transitions, and finally executing pNode methods on nodes that deliver outputs to applications.  
 
-The pNode class provides a default Petri Net behavior, keeping track of a token count. And, the token count is updated when a transition is triggered. A transition merely moves input node resources (decrements the token count of input nodes) to a reduction in the output nodes (increments the token count of output nodes). 
+(*Async version*): Every time an event updates the state of a node, an event will be fired on each downstream transition. The transitions will then examine their inputs to see if the new marking results in its activation. If the transition becomes active, it will reduce its results into an output to be published to the places referenced in its output list.
 
-The class, RunPetri, is the class that takes in the net definition, a JSON object, so that the network model may be stored and used. The class RunPetri exposes methods for adding in resources, running transitions, and finally executing pNode methods on nodes that deliver outputs to applications. 
+The node.js application program may *require* this module. The requirement statement will produce an object exposing the class definitions. For example: 
 
-Every time the 'step' method of RunPetri is called, RunPetri objects will examine each transition element to see if it has enough inputs to fire. If it does, the transition methods will reduce the input resources and transition the result of the reduction to the output nodes. (The default behavior for reduction is to AND the inputs and use the result to increment the outputs.)
-
-The application program may require the module. The requirement statement will produce an object exposing the class definitions. For example: 
 ```
-var PetriClasses = require('run-petri');
+var PetriClasses = require('run-petri-async');
 var RunPetri = PetriClasses.RunPetri
 var pNode = PetriClasses.pNode;
 ```
@@ -73,22 +73,23 @@ var net_def = <any way of defining the JSON object.>
 pNet.setNetworkFromJson(net_def)
 ```
 
-The JSON object referenced by net_def in the example above has an array of nodes definitions and an array of transitions.
+The JSON object referenced by *net_def* in the example above has an array of nodes definitions and an array of transitions. The method *pNet.setNetworkFromJson*, compiles the JSON definition.
 
 Once the nodes and transitions are compiled by the RunPetri instance, the nodes (circles in Petri net diagrams) may receive values.
 
-When all the inputs nodes of a transition contain values, the Petri net may perform actions that move the values forward through reductions. Transitions that have all of their inputs containing values, are called "active" transitions. 
+Typically, nodes that take in inputs from external sources, networks, driver ports, etc. will be the first nodes to receive values. These nodes may be refered to as ***input nodes*** for the whole systems. Each transition receives activation from input places, those are nodes that point to the transition and may be internal to the network.
 
-It is up to the application program to trigger the execution of the active transitions. At any time, the application may call pNet.step(), and drive the values forward. 
+When all the places nodes of a transition contain values, the Petri net may perform actions that move the values forward through reductions. Transitions that have all of their inputs containing values, are called "active" transitions. 
 
 (*The step method is not included in run-petri-async.*)
 
+Active transitions collect their inputs as they fall into the domain of their event handlers. Once all input places are accounted for, the transtion will evaluate its reduction and then emit values to the places that follow it in the graph.
+
+Eventually, some transition will emit a value to an ***exit*** place. Such a place node will transfer its values out to networks or machines.
 
 The RunPetri class is defined with a way for the application program to pass values into it asynchronoulsy. The JSON object may contain definitions of nodes that will be called *sources*. The RunPetri instance compiles event handlers for events named with the ids of the source nodes. In this way, processes that take in data asynchronously may emit values to the source nodes, creating new resources that may flow throught the net. For example, if a source node is named, "sensor1", the applcation may call, pNet.emit("sensor1",value).
 
-
 # The JSON Definition Object
-
 
 Here is an example of a JSON definition object for RunPeti:
 
@@ -170,6 +171,8 @@ Currently, the only node type that is being assign a callback is an 'exit' node.
 ```cbGen(<reducer name>,"reduce")```  should return a function that takes in expected pNode outputs, the results of the _consume_ method, a pNode method, flowing into a transition, where the transition will call its reducer on each of the pNode outputs.
 
 It is up to the application to make define the _reduce_ and _exit_ functions properly.
+
+One more parameter is optional: When the application calls ```setNetworkFromJson(net_def,cbGen,nodeClasses,checkerGen)```, the fourth parameter will be a function that takes the name of some kind of value checker and returns a fucntion for it. The *checkerGen* must return a function that takes two value intputs and returns a boolean - (value,qty) -> boolean.  The value parameters is the value propagated to a place from a transition that precedes it. The qty is the place node calculation of its resources, e.g. a list, a count of tokens, or other.
 
 The following update of the network defined previously shows specification of a reducer on a particular transition.
 
@@ -327,6 +330,9 @@ Now the JSON has more information in it so that these classes can be used. (This
 					 "reduction" : {
 						"reducer" : "valueArray"
 						"initAccumulator" : []
+					},
+					"value_checking" : {
+						"L-sensor-1" : "type_time_float"
 					}
 
 				}
@@ -335,6 +341,8 @@ Now the JSON has more information in it so that these classes can be used. (This
 
 ```
 
+
+Note that in the above JSON, an example of the ***value\_checking*** field has been added.
 
 
 
