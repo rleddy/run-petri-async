@@ -100,14 +100,14 @@ function clonify(obj) {
 //  addResource
 //  consume
 //
-//  The pNode method forward, is call when a transition moves resources from the pNode on to another.
+//  The pNode method 'forward', is called when a transition moves resources from the pNode on to another.
 //  The transition calls 'consume' on one pNode and then calls forward for downstream pNodes with a value constructed from
-//  the results of reducing the consumed resources. (This is a very localised version of map-reduce.
+//  the results of reducing the consumed resources. (This is a very localised version of map-reduce).
 //
 //  If a pNode has a contraint checking method (determined by descendant classes) the contraint check will have to be passed
 //  before 'forward' can operate.  After this check, the type of the pNode will be important.
 //  If the pNode is an output and there is an exit node callback, the callback will be called.
-//  Otherwise, the resource value is added be a call to addResource.
+//  Otherwise, the resource value is added by a call to addResource.
 //
 //  ------ ------  ------ ------
 
